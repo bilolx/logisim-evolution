@@ -1,25 +1,24 @@
-/*
- * Logisim-evolution - digital logic design tool and simulator
- * Copyright by the Logisim-evolution developers
- *
- * https://github.com/logisim-evolution/
- *
- * This is free software released under GNU GPLv3 license
- */
-
 package com.cburch.logisim.gui.generic;
 
 import com.cburch.contracts.BaseComponentListenerContract;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Rectangle;
+import java.awt.event.ActionEvent;
 import java.awt.event.ComponentEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import javax.swing.AbstractAction;
+import javax.swing.ActionMap;
+import javax.swing.InputMap;
+import javax.swing.JComponent;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
+import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 
 public class CanvasPane extends JScrollPane {
@@ -38,7 +37,46 @@ public class CanvasPane extends JScrollPane {
     addComponentListener(listener);
     setWheelScrollingEnabled(false);
     addMouseWheelListener(zoomListener);
+    setupKeyBindings();
     contents.setCanvasPane(this);
+  }
+
+  private void setupKeyBindings() {
+    InputMap inputMap = getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+    ActionMap actionMap = getActionMap();
+    int ctrlMask = InputEvent.CTRL_DOWN_MASK;
+
+    // Приближение (Zoom In)
+    inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, ctrlMask), "zoomIn");
+    inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ADD, ctrlMask), "zoomIn");
+    
+    // Отдаление (Zoom Out)
+    inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, ctrlMask), "zoomOut");
+    inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, ctrlMask), "zoomOut");
+
+    actionMap.put("zoomIn", new AbstractAction() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            if (zoomModel != null) {
+                double zoom = zoomModel.getZoomFactor() + 0.1;
+                var opts = zoomModel.getZoomOptions();
+                double max = opts.get(opts.size() - 1) / 100.0;
+                zoomModel.setZoomFactor(Math.min(zoom, max), null);
+            }
+        }
+    });
+
+    actionMap.put("zoomOut", new AbstractAction() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+            if (zoomModel != null) {
+                double zoom = zoomModel.getZoomFactor() - 0.1;
+                var opts = zoomModel.getZoomOptions();
+                double min = opts.get(0) / 100.0;
+                zoomModel.setZoomFactor(Math.max(zoom, min), null);
+            }
+        }
+    });
   }
 
   public Dimension getViewportSize() {
@@ -92,18 +130,11 @@ public class CanvasPane extends JScrollPane {
   private class Listener implements BaseComponentListenerContract, PropertyChangeListener {
 
     @Override
-    public void componentHidden(ComponentEvent e) {
-      // do nothing
-    }
+    public void componentHidden(ComponentEvent e) { }
 
     @Override
-    public void componentMoved(ComponentEvent e) {
-      // do nothing
-    }
+    public void componentMoved(ComponentEvent e) { }
 
-    //
-    // ComponentListener methods
-    //
     @Override
     public void componentResized(ComponentEvent e) {
       contents.recomputeSize();
@@ -156,16 +187,8 @@ public class CanvasPane extends JScrollPane {
     }
 
     private int scrollValue(JScrollBar bar, int val) {
-      if (val > 0) {
-        if (bar.getValue() < bar.getMaximum() + val * 2 * bar.getBlockIncrement()) {
-          return bar.getValue() + val * 2 * bar.getBlockIncrement();
-        }
-      } else {
-        if (bar.getValue() > bar.getMinimum() + val * 2 * bar.getBlockIncrement()) {
-          return bar.getValue() + val * 2 * bar.getBlockIncrement();
-        }
-      }
-      return 0;
+      int newValue = bar.getValue() + val * 2 * bar.getBlockIncrement();
+      return Math.max(bar.getMinimum(), Math.min(newValue, bar.getMaximum()));
     }
   }
 }
