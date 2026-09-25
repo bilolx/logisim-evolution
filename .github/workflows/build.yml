@@ -1,8 +1,8 @@
 # This workflow will build a Java project with Gradle
 # For more information see:
-#  https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-gradle
-
+# https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-gradle
 name: "Build"
+
 on:
   push:
     # main is left just for emergency cases.
@@ -13,81 +13,97 @@ on:
 env:
   JDK_VERSION: 21
   JDK_DISTRO: 'temurin'
+
 jobs:
   analyze_sources:
     name: "Do we need to build the application?"
     runs-on: ubuntu-latest
     outputs:
-      # Export 'filter' step check result so next step can use it.
+      # Экспортируем оригинальный true/false напрямую из фильтра путей
       run_build: ${{ steps.filter.outputs.src }}
-
     steps:
-    - name: "Install packages..."
-      run: sudo apt-get install sysvbanner
+      - name: "Install packages..."
+        run: sudo apt-get update && sudo apt-get install -y sysvbanner
 
       # https://github.com/marketplace/actions/checkout
-    - name: "Checkout sources"
-      uses: actions/checkout@v7
+      - name: "Checkout sources"
+        uses: actions/checkout@v4
 
       # https://github.com/marketplace/actions/paths-changes-filter
-    - name: "Look for changes in monitored locations"
-      uses: dorny/paths-filter@v4
-      id: filter
-      with:
-        filters: |
-          src:
-            - 'src/**/*.java'
-            - 'src/**/*.properties'
-            - '*.gradle*'
-            - 'gradle.properties'
-            - 'gradle/**/*.properties'
-            - 'build.gradle.kts'
-            - '.github/workflows/build.yml'
+      - name: "Look for changes in monitored locations"
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**/*.java'
+              - 'src/**/*.properties'
+              - '*.gradle*'
+              - 'gradle.properties'
+              - 'gradle/**/*.properties'
+              - 'build.gradle.kts'
+              - '.github/workflows/build.yml'
 
-    - name: "WILL BUILD STEP BE RUN?"
-      run: |
-        found="NO"
-        [[ ${{ steps.filter.outputs.src }} == 'true' ]] && found="YES"
-        echo "run_build=${found}" >> $GITHUB_OUTPUT
-        echo -e "\n****************************************\n"
-        banner "${found}"
-        echo -e "****************************************"
+      # Этот шаг теперь чисто декоративный (для логов) и не ломает логику
+      - name: "WILL BUILD STEP BE RUN?"
+        run: |
+          found="NO"
+          [[ ${{ steps.filter.outputs.src }} == 'true' ]] && found="YES"
+          echo -e "\n****************************************\n"
+          banner "${found}"
+          echo -e "****************************************"
 
   # Build step.
   build:
     name: "Gradle builder"
     runs-on: ubuntu-latest
-    # Will run only if analyze_sources determined it is needed.
+    # Будет запущено только если analyze_sources вернул 'true'
     needs: analyze_sources
     if: needs.analyze_sources.outputs.run_build == 'true'
-
     steps:
-    - name: "Checkout sources"
-      uses: actions/checkout@v7
-    - name: Set up JDK ${{ env.JDK_VERSION }} ${{ env.JDK_DISTRO }}
-      uses: actions/setup-java@v6
-      with:
-        java-version: ${{ env.JDK_VERSION }}
-        distribution: ${{ env.JDK_DISTRO }}
-        # This is so Sonar has access to the full git history
-        fetch-depth: 0
-    - name: Cache SonarCloud packages
-      uses: actions/cache@v6
-      with:
-        path: ~/.sonar/cache
-        key: ${{ runner.os }}-sonar
-        restore-keys: ${{ runner.os }}-sonar
-    - name: Cache Gradle packages
-      uses: actions/cache@v6
-      with:
-        path: ~/.gradle/caches
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle') }}
-        restore-keys: ${{ runner.os }}-gradle
-    - name: "Build with Gradle"
-      run: |
-       chmod +x gradlew
-       ./gradlew build -x checkstyleMain -x checkstyleTest
-    - name: "Run SonarQube"
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      run: ([ -z "$SONAR_TOKEN" ] || ./gradlew sonar)
+      - name: "Checkout sources"
+        # Для корректной работы SonarCloud нужен fetch-depth: 0 прямо при чекауте
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ env.JDK_VERSION }} ${{ env.JDK_DISTRO }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JDK_VERSION }}
+          distribution: ${{ env.JDK_DISTRO }}
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # Оптимизация кэша: хэшируем все gradle-файлы для точности кэша
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      # Исправлено: Сборка и SonarQube объединены, чтобы Sonar видел результаты компиляции
+      # (Для анализа SonarCloud обычно требуются скомпилированные .class файлы)
+      - name: "Build with Gradle and Run Sonar"
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Часто необходим для SonarCloud
+        run: |
+          chmod +x gradlew
+          if [ -z "$SONAR_TOKEN" ]; then
+            ./gradlew build -x checkstyleMain -x checkstyleTest
+          else
+            ./gradlew build sonar -x checkstyleMain -x checkstyleTest
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logisim-ready-app
+          path: build/libs/*.jar
